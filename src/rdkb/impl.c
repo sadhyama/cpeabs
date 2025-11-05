@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -73,6 +74,8 @@
 #define MQTT_PORT_PARAM "Device.X_RDK_MQTT.Port"
 
 #endif
+
+#define BFR_SIZE_64  64
 /*----------------------------------------------------------------------------*/
 /*                               Data Structures                              */
 /*----------------------------------------------------------------------------*/
@@ -106,6 +109,8 @@ static void systemReadyEventHandler(rbusHandle_t handle, rbusEvent_t const* even
 static void subscribeSystemReadyEvent();
 static int rbus_checkIfSystemReady();
 static int webcfgRbusRegisterWithCR();
+bool isEthWanEnabled();
+char *getDeviceEthWanMAC();
 /*----------------------------------------------------------------------------*/
 /*                             External Functions                             */
 /*----------------------------------------------------------------------------*/
@@ -195,7 +200,17 @@ char* get_deviceMAC()
 
 	char *macID = NULL;
 	char deviceMACValue[32] = { '\0' };
-	macID = getParamValue(DEVICE_MAC);
+	if (!isEthWanEnabled())
+	{
+		macID = getParamValue(DEVICE_MAC);
+	}
+	else
+	{
+		CpeabsInfo("Ethernet WAN is enabled\n");
+		macID = getDeviceEthWanMAC();
+		CpeabsInfo("macID fetched from eth wan mac is %s\n", macID);
+	}
+
 	if (macID != NULL)
 	{
 	    cpeabStrncpy(deviceMACValue, macID, strlen(macID)+1);
@@ -1031,3 +1046,65 @@ void getValues_rbusmqtt(const char *paramName[], const unsigned int paramCount, 
 	}
 }
 #endif
+
+bool isEthWanEnabled(void)
+{
+    FILE *fp = NULL;
+    char command_out[BFR_SIZE_64] = {0};
+
+    fp = popen("syscfg get eth_wan_enabled", "r");
+    if (!fp)
+    {
+        CpeabsError("%s: popen() failed while getting eth_wan status\n", __func__);
+        return false;
+    }
+
+    if (fgets(command_out, sizeof(command_out), fp) == NULL)
+    {
+        pclose(fp);
+        return false;
+    }
+    pclose(fp);
+
+    command_out[strcspn(command_out, "\r\n")] = 0;
+
+    CpeabsInfo("command_out is %s\n", command_out);
+    if (strcmp(command_out, "true") == 0)
+	return true;
+
+    return false;
+}
+
+char *getDeviceEthWanMAC(void)
+{
+    FILE *fp = NULL;
+    char *mac_str = NULL;
+    char device_mac[BFR_SIZE_64] = {0};
+
+    fp = popen("sysevent get eth_wan_mac", "r");
+    if (!fp)
+    {
+        CpeabsError("%s: popen() failed while getting eth_wan_mac\n", __func__);
+        return NULL;
+    }
+
+    if (!fgets(device_mac, sizeof(device_mac), fp))
+    {
+        CpeabsError("%s: failed to read device mac\n", __func__);
+        pclose(fp);
+        return NULL;
+    }
+    pclose(fp);
+
+    device_mac[strcspn(device_mac, "\r\n")] = 0;
+
+    if (!*device_mac)
+    {
+        CpeabsError("%s: device mac is empty\n", __func__);
+        return NULL;
+    }
+
+    mac_str = strdup(device_mac);
+
+    return mac_str;
+}
